@@ -114,20 +114,19 @@ Although it is often harmless enough to retain the other fields, it does make re
 #| label: selecting 
 
 dat_nt <- dat_nt |>
-  dplyr::select(site_id,
-                site_reef_name,
+  dplyr::select(
+    site_id,
     site_name,
     site_latitude,
     site_longitude,
-    survey_start_date,
+    site_depth,
+    site_reef_name,
+    site_code,
     survey_depth,
     survey_transect_number,
-    image_id,
-    image_quality,
-    point_id,
+    survey_start_date,
     point_num,
-    point_machine_classification,
-    point_human_classification
+    point_human_group_code
     )
 dat_nt |> as.data.frame() |> head()
 ```
@@ -136,64 +135,7 @@ dat_nt |> as.data.frame() |> head()
 dat_nt |> dim()
 ```
 
-## Lengthen the data
 
-```{r}
-#| label: pivot
-dat_nt <-
-  dat_nt |>
-  pivot_longer(cols = matches("point_.*_classification"),
-    names_to = "type",
-    values_to = "classification"
-    ) 
-dat_nt |> as.data.frame() |> head()
-```
-
-## Joining to the group code lookup data
-
-Our primary interest in these data will be in exploring patterns in broad taxanomic groups such as *Hard coral* and *algae*. Since the machine learning tools behind ReefCloud are tuned to classify to finer taxonomic resolutions, next task will be to use a lookup table so as to assign the higher order group codes (HC and A) to the data.
-
-::: panel-tabset
-### glimpse
-
-```{r}
-#| label: examineLabelset
-labelset_nt |> glimpse() 
-```
-
-### head
-
-```{r}
-#| label: examineLabelset1
-## Explore the first 6 rows of the labelseta
-labelset_nt |> head() 
-```
-
-### str
-
-```{r}
-#| label: examineLabelset2
-labelset_nt |> str() 
-```
-
-### Easystats (datawizard)
-
-```{r}
-#| label: examineLabelset3
-labelset_nt |> datawizard::data_codebook() |> knitr::kable() 
-```
-:::
-
-```{r}
-#| label: join
-dat_nt <-
-  dat_nt |>
-  left_join(labelset_nt |>
-              dplyr::select(CODE, GROUP = `FUNCTIONAL GROUP`),
-              by = c("classification" = "CODE")
-    )
-dat_nt |> as.data.frame() |> head() 
-```
 
 ## Tally up points
 
@@ -205,12 +147,10 @@ dat_nt <-
   dat_nt |> 
   group_by(across(c(starts_with("site"),
     starts_with("survey"),
-    type,
-    image_id,
-    GROUP))
+    point_human_group_code))
   ) |>
   summarise(COUNT = n(), .groups = "keep") |> 
-  ungroup(GROUP) |>
+  ungroup(point_human_group_code) |>
   mutate(TOTAL = sum(COUNT)) |>
   ungroup() 
 dat_nt |> as.data.frame() |> head() 
@@ -233,20 +173,16 @@ Since the data represent the classification of points in images, they only inclu
 To do so, we must create a data set that contains every GROUP in every IMAGE.
 
 ```{r}
-GROUPS <- dat_nt |> pull(GROUP) |> unique()
+GROUPS <- dat_nt |> pull(point_human_group_code) |> unique()
 data.filler <- dat_nt |>
   dplyr::select(
     starts_with("site"),
     survey_start_date,
-    #Year,
     survey_depth,
     transect_id,
-    image_id,
-    type,
-    ## GROUP,
     TOTAL) |> 
   distinct() |> 
- tidyr::crossing(GROUP = GROUPS) 
+ tidyr::crossing(point_human_group_code = GROUPS) 
 
 dat_nt <-
   dat_nt |> 
@@ -257,9 +193,7 @@ dat_nt <-
       #Year,
       survey_depth,
       transect_id,
-      image_id,
-      type,
-      GROUP
+     point_human_group_code
     ))) |> 
   mutate(COUNT = ifelse(is.na(COUNT), 0, COUNT),
     TOTAL = max(TOTAL, na.rm = TRUE)
@@ -267,20 +201,7 @@ dat_nt <-
 dat_nt |> as.data.frame() |> head() 
 ```
 
-## Sum to transect level
 
-```{r}
-## Now sum up to transect level
-dat_nt <- 
-  dat_nt |>
-  ungroup(image_id) |>
-  summarise(COUNT = sum(COUNT),
-    TOTAL = sum(TOTAL)
-  ) |> 
-  ungroup() |> 
-  droplevels()
-dat_nt |> as.data.frame() |> head() 
-```
 
 ## Generate a year field
 
@@ -316,13 +237,13 @@ dat_nt |> as.data.frame() |> head()
 #| fig.width: 8
 #| fig.height: 4
 dat_nt |>
-  filter(type == "point_human_classification", GROUP == "HC") |> 
+  filter(point_human_group_code == "HC") |> 
   ggplot(aes(y =  100*COUNT/TOTAL, x = survey_start_date)) +
   geom_point() +
   geom_line(aes(group = transect_id)) + 
   scale_y_continuous("Hard coral cover (%)") +
   scale_colour_discrete("Survey depth (m)") +
-  scale_x_datetime("Year", date_breaks = "1 years", date_labels = "%Y") +
+  scale_x_datetime("Year", date_breaks = "2 months", date_labels = "%b") +
   facet_wrap(~site_name) +
   theme_classic()
 ```
@@ -334,7 +255,7 @@ dat_nt |>
 #| fig.width: 4
 #| fig.height: 4
 dat_nt |>
-  filter(type == "point_human_classification", GROUP == "HC") |> 
+  filter(point_human_group_code == "HC") |> 
   ggplot(aes(y =  100*COUNT/TOTAL, x = fYear)) +
   geom_boxplot() +
   facet_wrap(~site_name) 
@@ -346,8 +267,7 @@ I fully acknowledge this issue and therefore acknowledge that the analysis I wil
 ```{r, mhiden=TRUE}
 #| label: hard coral
 dat_hc_nt <- dat_nt |>
-  filter(GROUP == "HC") |>
-  filter(type == "point_human_classification") |>
+  filter(point_human_group_code == "HC") |>
   droplevels()
 ```
 
@@ -379,8 +299,8 @@ dat_hc_nt |>
   mutate(COVER = COUNT/TOTAL) |>
   group_by(fYear) |>
   summarise(
-    mean(COVER),
-    sd(COVER))
+    mean(qlogis(COVER), na.rm=TRUE),
+    sd(qlogis(COVER), na.rm=TRUE))
 ```
 
 ```{r}
